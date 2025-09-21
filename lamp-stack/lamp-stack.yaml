@@ -1,0 +1,406 @@
+# =================================================================
+# PERFECT LAMP STACK for Myanmar Students - Learning Version
+# Professor's Complete Teaching Material
+# =================================================================
+
+# ---------------------------------------------------------------
+# 1. ConfigMap - PHP Configuration (ပြင်ဆင်မှု ဖိုင်)
+# Purpose: PHP settings ကို သိမ်းထားတဲ့ နေရာ
+# ---------------------------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: php-config
+  labels:
+    app: lamp-stack
+    component: config
+data:
+  php.ini: |
+    # PHP Basic Settings
+    variables_order = "EGPCS"
+    max_execution_time = 300
+    max_input_time = 300  
+    memory_limit = 256M
+    post_max_size = 50M
+    upload_max_filesize = 50M
+    
+    # Error Reporting (Development မှာပဲ enable လုပ်ပါ)
+    display_errors = On
+    error_reporting = E_ALL
+    log_errors = On
+    
+    # Security Settings
+    expose_php = Off
+    allow_url_fopen = Off
+
+---
+
+# ---------------------------------------------------------------
+# 2. Secret - MySQL Credentials (လုံခြုံရေး အချက်အလက်)
+# Purpose: Database passwords တွေကို လုံခြုံစွာ သိမ်းထားမယ်
+# Note: Production မှာ external secret management သုံးပါ
+# ---------------------------------------------------------------
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mysql-secrets
+  labels:
+    app: lamp-stack
+    component: database
+type: Opaque
+data:
+  # All values are base64 encoded
+  # To decode: echo "encoded_value" | base64 -d
+  mysql-root-password: cm9vdF9zZWNyZXRfMTIz    # root_secret_123
+  mysql-database: bGFtcF9kYXRhYmFzZQ==        # lamp_database
+  mysql-user: bGFtcF91c2Vy                    # lamp_user
+  mysql-password: bGFtcF9wYXNzd29yZF8xMjM=    # lamp_password_123
+  mysql-host: bG9jYWxob3N0                    # localhost
+
+---
+
+# ---------------------------------------------------------------
+# 3. Deployment - Main Application (အဓိက Application)
+# Purpose: Apache+PHP နဲ့ MySQL containers တွေကို manage လုပ်မယ်
+# ---------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lamp-wp
+  labels:
+    app: lamp-stack
+    tier: application
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: lamp-app
+      tier: application
+  template:
+    metadata:
+      labels:
+        app: lamp-app
+        tier: application
+      annotations:
+        # Deployment information for monitoring
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "80"
+    spec:
+      # -------------------------------------------------------
+      # Container 1: Apache + PHP (Web Server)
+      # -------------------------------------------------------
+      containers:
+        - name: httpd-php-container
+          image: webdevops/php-apache:alpine-3-php7
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+          
+          # Environment Variables from Secret
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secrets
+                  key: mysql-root-password
+            - name: MYSQL_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secrets
+                  key: mysql-database
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secrets
+                  key: mysql-user
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secrets
+                  key: mysql-password
+            - name: MYSQL_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secrets
+                  key: mysql-host
+          
+          # Volume Mounts
+          volumeMounts:
+            - name: php-config
+              mountPath: /opt/docker/etc/php/php.ini
+              subPath: php.ini
+              readOnly: true
+            - name: app-storage
+              mountPath: /app
+          
+          # Resource Limits (Production မှာ အရေးကြီးတယ်)
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 250m
+              memory: 256Mi
+          
+          # Health Checks
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80  
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+        # -------------------------------------------------------
+        # Container 2: MySQL Database
+        # -------------------------------------------------------
+        - name: mysql-container
+          image: mysql:5.6
+          ports:
+            - name: mysql
+              containerPort: 3306
+              protocol: TCP
+          
+          # Environment Variables from Secret
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secrets
+                  key: mysql-root-password
+            - name: MYSQL_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secrets
+                  key: mysql-database
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secrets
+                  key: mysql-user
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secrets
+                  key: mysql-password
+          
+          # Volume Mounts
+          volumeMounts:
+            - name: mysql-data
+              mountPath: /var/lib/mysql
+          
+          # Resource Limits
+          resources:
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+            requests:
+              cpu: 500m
+              memory: 512Mi
+          
+          # Health Checks
+          livenessProbe:
+            exec:
+              command:
+                - mysqladmin
+                - ping
+                - -h
+                - localhost
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          
+          readinessProbe:
+            exec:
+              command:
+                - mysql
+                - -h
+                - localhost
+                - -u
+                - root
+                - -p$(MYSQL_ROOT_PASSWORD)
+                - -e
+                - "SELECT 1"
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+      # -------------------------------------------------------
+      # Volumes Configuration
+      # -------------------------------------------------------
+      volumes:
+        - name: php-config
+          configMap:
+            name: php-config
+            defaultMode: 0644
+        - name: mysql-data
+          emptyDir: {}  # Development: temporary storage
+          # For Production, use PersistentVolume:
+          # persistentVolumeClaim:
+          #   claimName: mysql-pvc
+        - name: app-storage
+          emptyDir: {}  # For application files
+
+      # -------------------------------------------------------
+      # Pod Security and Scheduling
+      # -------------------------------------------------------
+      securityContext:
+        fsGroup: 2000
+      
+      restartPolicy: Always
+      
+      # Node Selection (optional)
+      # nodeSelector:
+      #   kubernetes.io/os: linux
+
+---
+
+# ---------------------------------------------------------------
+# 4. NodePort Service - External Access (ပြင်ပ ဝင်ရောက်မှု)
+# Purpose: ပြင်ပက application ကို access လုပ်နိုင်အောင်
+# ---------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: lamp-service
+  labels:
+    app: lamp-stack
+    component: frontend
+spec:
+  type: NodePort
+  selector:
+    app: lamp-app
+    tier: application
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      nodePort: 30008
+      protocol: TCP
+
+---
+
+# ---------------------------------------------------------------
+# 5. ClusterIP Service - Internal MySQL Access
+# Purpose: Cluster အတွင်းမှာ MySQL ကို access လုပ်ဖို့
+# ---------------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-service  
+  labels:
+    app: lamp-stack
+    component: database
+spec:
+  type: ClusterIP
+  selector:
+    app: lamp-app
+    tier: application
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: 3306
+      protocol: TCP
+
+---
+
+# ---------------------------------------------------------------
+# 6. Horizontal Pod Autoscaler (Optional - Advanced)
+# Purpose: Traffic များလာရင် automatically scale up လုပ်မယ်
+# ---------------------------------------------------------------
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: lamp-hpa
+  labels:
+    app: lamp-stack
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: lamp-wp
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+
+---
+
+# =================================================================
+# ADDITIONAL PRODUCTION RESOURCES (အပိုဆောင်းများ)
+# =================================================================
+
+# ---------------------------------------------------------------
+# 7. NetworkPolicy - Security (လုံခြုံရေး)
+# Purpose: Network traffic ကို control လုပ်မယ်
+# ---------------------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: lamp-network-policy
+  labels:
+    app: lamp-stack
+spec:
+  podSelector:
+    matchLabels:
+      app: lamp-app
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: lamp-app
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 3306
+  egress:
+  - {}  # Allow all outbound traffic
+
+---
+
+# ---------------------------------------------------------------  
+# 8. PersistentVolumeClaim - Data Persistence (Production သုံး)
+# Purpose: Database data ကို permanently သိမ်းဖို့
+# ---------------------------------------------------------------
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mysql-pvc
+  labels:
+    app: lamp-stack
+    component: storage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: standard  # Change based on your cluster
+  resources:
+    requests:
+      storage: 10Gi
