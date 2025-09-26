@@ -33,3 +33,28 @@ Result Return: Code ကို execute လုပ်ရာကနေ ထွက်�
 Nginx သည် PHP-FPM ဆီက ရရှိလာတဲ့ Final HTML Output ကို လက်ခံရယူပြီး၊ ၎င်းကို NodePort 30012 မှတစ်ဆင့် မူလ Client ဆီသို့ ပြန်လည်ပေးပို့ခြင်းဖြင့် Request Cycle တစ်ခု ပြီးဆုံးသွားပါတယ်။
 
 ဒါဟာ Kubernetes ရဲ့ Pod Networking၊ Configuration Management (ConfigMap) နဲ့ Data Sharing (Volume) တို့ ပေါင်းစပ်ပြီး Dynamic Web Application တစ်ခုကို အလုပ်လုပ်စေတဲ့ Mechanism ဖြစ်ပါတယ်။
+
+
+***** flow *****
+Communication Flow
+      1. User Request
+        Via: NodeIP:30012
+        Targets: nginx-phpfpm-service
+      2. Service Forwards
+        To: nginx-phpfpm Pod (on Port 8098 of nginx-container)
+      3. Nginx Processes Request
+        Looks for: index.php in /var/www/html
+        Uses: nginx-config (from ConfigMap)
+        Detects: .php file -> triggers fastcgi_pass
+      4. Nginx to PHP-FPM
+        Method: fastcgi_pass
+        Address: 127.0.0.1:9000 (via shared Pod network)
+        Targets: php-fpm-container (listening on Port 9000)
+      5. PHP-FPM Executes PHP
+        Reads: index.php from /var/www/html (shared-files volume)
+        Processes: PHP code
+        Generates: HTML output
+      6. PHP-FPM Returns Response
+        To: Nginx (via 127.0.0.1:9000)
+      7. Nginx Serves Final Response
+        To: User (via NodeIP:30012)
