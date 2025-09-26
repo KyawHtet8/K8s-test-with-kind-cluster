@@ -1,0 +1,64 @@
+# 1/4: Java Backend Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-java-deployment
+spec:
+  selector:
+    matchLabels:
+      app: backend-api
+  template:
+    metadata:
+      labels:
+        app: backend-api
+    spec:
+      containers:
+        - name: java-api-container
+          image: openjdk:17-jdk-slim 
+          ports:
+            - containerPort: 8080
+---
+# 2/4: Backend Service (ClusterIP - Frontend က ခေါ်ဖို့အတွက်သာ)
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-api-service
+spec:
+  type: ClusterIP # <<< Cluster အတွင်းမှာပဲ သုံးရန်
+  selector:
+    app: backend-api
+  ports:
+    - port: 8080
+---
+# 3/4: React Frontend Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend-react-deployment
+spec:
+  selector:
+    matchLabels:
+      app: frontend-web
+  template:
+    metadata:
+      labels:
+        app: frontend-web
+    spec:
+      containers:
+        - name: nginx-frontend-container
+          image: nginx:stable-alpine # <<< React build files များကို Serve လုပ်ရန်
+          ports:
+            - containerPort: 80 # <<< Nginx default port
+---
+# 4/4: Frontend Service (NodePort - External Access အတွက်)
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-web-service
+spec:
+  type: NodePort # <<< ပြင်ပမှ access လုပ်ရန်
+  selector:
+    app: frontend-web
+  ports:
+    - port: 80
+      nodePort: 30080 # <<< Browser မှ NodeIP:30080 ဖြင့် ခေါ်နိုင်
